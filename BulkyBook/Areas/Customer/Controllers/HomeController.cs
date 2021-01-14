@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using BulkyBook.Models.ViewModels;
 using BulkyBook.DataAccess.Repository.IRepository;
+using BulkyBook.Models;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace BulkyBook.Areas.Customer.Controllers
 {
@@ -26,6 +29,66 @@ namespace BulkyBook.Areas.Customer.Controllers
         {
             var allProducts = _unitOfWork.Product.GetAll(includeProperties: "Category,CoverType");
             return View(allProducts);
+        }
+
+        public IActionResult Details(int id)
+        {
+            var productFromDb = _unitOfWork.Product.GetFirstOrDefault(x=>x.Id == id, includeProperties: "Category,CoverType");
+            var shoppingCart = new ShoppingCart()
+            {
+                Product = productFromDb,
+                ProductId = productFromDb.Id
+            };
+
+            return View(shoppingCart);
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [Authorize]
+        public IActionResult Details(ShoppingCart CartObject)
+        {
+            CartObject.Id = 0;
+            if (ModelState.IsValid)
+            {
+                var claimsIdentity = (ClaimsIdentity)User.Identity;
+                var claim = claimsIdentity.FindFirst(ClaimTypes.NameIdentifier);
+                CartObject.ApplicationUserId = claim.Value;
+
+                ShoppingCart cartFromDb = _unitOfWork.ShoppingCart.GetFirstOrDefault(
+                    u => u.ApplicationUserId == CartObject.ApplicationUserId && u.ProductId == CartObject.ProductId
+                    , includeProperties: "Product"
+                    );
+
+                if (cartFromDb == null)
+                {
+                    //no records exists in database for that product for that user
+                    _unitOfWork.ShoppingCart.Add(CartObject);
+                }
+                else
+                {
+                    cartFromDb.Count += CartObject.Count;
+                    //_unitOfWork.ShoppingCart.Update(cartFromDb);
+                }
+                _unitOfWork.Save();
+
+                var count = _unitOfWork.ShoppingCart
+                    .GetAll(c => c.ApplicationUserId == CartObject.ApplicationUserId)
+                    .ToList().Count();
+
+                return RedirectToAction(nameof(Index));
+            }
+            else
+            {
+                var productFromDb = _unitOfWork.Product.
+                        GetFirstOrDefault(u => u.Id == CartObject.ProductId, includeProperties: "Category,CoverType");
+                ShoppingCart cartObj = new ShoppingCart()
+                {
+                    Product = productFromDb,
+                    ProductId = productFromDb.Id
+                };
+                return View(cartObj);
+            }
         }
 
         public IActionResult Privacy()
